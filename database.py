@@ -69,8 +69,59 @@ def inicializar_banco() -> None:
                 recebido_em TEXT NOT NULL,
                 recorrencia INTEGER NOT NULL DEFAULT 0 CHECK(recorrencia IN (0,1))
             );
-            """)        
+            """)  
 
-if __name__ == "__main__":
-    inicializar_banco()
-    print("Banco de dados inicializado com sucesso!")
+
+#======================================================================================================================
+# CRUD - PESSOAS
+#======================================================================================================================
+         
+def criar_pessoa(
+    nome: str
+) -> None:
+    
+    with closing(_conectar()) as conn:
+        conn.execute(
+            "INSERT INTO Pessoas (nome) VALUES (?)",
+            (nome.strip(),)
+        )
+        conn.commit()
+
+def listar_pessoas() -> list[dict]:
+
+    with closing(_conectar()) as conn:
+
+        resposta = [
+            dict(r) 
+            for r in conn.execute("SELECT * FROM Pessoas").fetchall()
+        ]
+
+    return resposta
+
+
+def editar_pessoa(pessoa_id: int, novo_nome: str ) -> None:
+    with closing(_conectar()) as conn:
+        conn.execute(
+            "UPDATE Pessoas SET nome = ? WHERE id = ?",
+            (novo_nome, pessoa_id),
+        )
+        conn.commit()
+
+
+def deletar_pessoa(pessoa_id: int) -> bool :
+    "Retorna True se deletou com sucesso ou False se houver impedimento por chave estrangeira"
+    try:         
+        with closing(_conectar()) as conn:
+            cursor = conn.execute(
+                "DELETE FROM Pessoas WHERE id = ?",
+                (pessoa_id,)
+            )
+            conn.commit() # necessário para salvar a remoção no arquivo .db
+            
+            # Retorna True se algum registro foi realmente afetado/deletado
+            return cursor.rowcount > 0
+
+    except sqlite3.IntegrityError:
+        print(f"Não é possível deletar a pessoa ID {pessoa_id} pois ela possui registros vinculados.")
+        return False
+    
