@@ -267,13 +267,14 @@ def criar_transacao(
     data: date, 
     valor: float, 
     tipo: str
-) -> bool:
+) -> int | None :
     # Verificar se o operador esta cadastrado na tabela Pessoa
     pessoa = procurar_pessoa(operador.strip())
 
     if pessoa:
         with closing(_conectar()) as conn:
-            conn.execute(
+            cursor = conn.cursor()
+            cursor.execute(
                 """
                     INSERT INTO Transacoes (operador,descricao, data, valor, tipo)
                     VALUES(?, ?, ?, ?, ?)
@@ -281,12 +282,15 @@ def criar_transacao(
                 (pessoa["id"],descricao.strip(), data.isoformat(), valor, tipo.strip()) #parametro tipo tem restrição (Receita e Despesa)
             )
             conn.commit()
-            print(f"Transação {descricao} no valor de {valor}, cadastrado com sucesso.")
 
-        return True
+            # Captura o ID da transação criada
+            transacao_id = cursor.lastrowid
+
+            print(f"Transação {descricao} no valor de {valor}, cadastrado com sucesso.")    
+            return transacao_id
     else:
         print(f"Operador {operador} não cadastrado na Tabela Pessoas.")
-        return False
+        return None
 
 
 def procurar_transacao(id: int) -> list | None:
@@ -475,9 +479,9 @@ def deletar_transacao(id:int) -> bool:
         with closing(_conectar()) as conn:
             cursor = conn.execute("""
                 DELETE FROM Transacoes 
-                WHERE = ?
-            """,
-            (id,)
+                WHERE id = ?
+                """,
+                (id,)
 
             )
             conn.commit() 
@@ -487,5 +491,124 @@ def deletar_transacao(id:int) -> bool:
         return False
 
 
+#=======================================================================================================================
+# CRUD - Receitas
+#=======================================================================================================================
+def criar_receita(
+        data: date,
+        operador: str,
+        descricao: str,
+        valor: float,
+        recebido_em: str,
+        frequencia: str,
+        recorrencia: bool
+) -> int | None:
+    # Criando a transação ao qual ele correnponde
+    id_transacao = criar_transacao(operador,descricao,data,valor, "Receita")
 
-# Continuar construindo a funçao editar_transacao
+    if id_transacao:
+        with closing(_conectar()) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                    INSERT INTO Receitas (transacao, frequencia, recebido_em, recorrencia)
+                    VALUES (?, ?, ?, ?)
+                """,
+                (id_transacao, frequencia, recebido_em, recorrencia)            
+            )
+            conn.commit()
+            
+            print(f"Despesa vinculada a transacao de id {id_transacao} criada com sucesso.")
+            # retorna o id da despesa criada
+            return cursor.lastrowid
+        
+    else:        
+        return None
+    
+
+def procurar_receita(id: int) -> dict | None:
+    
+    with closing(_conectar()) as conn:
+        cursor = conn.cursor()
+        resposta = cursor.execute("""
+                SELECT 
+                    r.id,
+                    r.transacao,
+                    t.data,
+                    p.nome,
+                    t.descricao,
+                    t.valor,
+                    r.recebido_em,
+                    r.frequencia,
+                    r.recorrencia                    
+                FROM Receitas r
+                JOIN Transacoes t ON transacao = t.id
+                JOIN Pessoas p ON t.operador = p.id                    
+                WHERE r.id = ?
+            """,
+            (id,)
+        ).fetchone()
+        return dict(resposta) if resposta else None
+    
+
+# funcao inacabada, precisa da função procurar Receita
+def editar_receita(
+    id: int,
+    data: date | None= None,
+    operador: str | None= None,
+    descricao: str| None= None,
+    valor: float | None= None,
+    recebido_em: str | None= None,
+    frequencia: str | None= None,
+    recorrencia: bool | None= None
+) -> bool:
+    #verficações
+    # Verifica se a receita com o id informado existe
+    receita = procurar_receita(id)    
+    if not receita:
+        print(f"Receita com ID {id} não existe. <Receitas>")
+        return False
+    
+    # No caso do operador ser informado, verifica se ele esta cadastrado na tabela 'Pessoas'.
+    pessoa: dict | None = None
+    if operador is not None:
+        pessoa = procurar_pessoa(operador)
+        if pessoa is  None:
+            print(f"O operador {operador} não está cadastrado na tabela de pessoas. <Receitas>")
+            return False        
+
+    atributos_receita = {          
+        'recebido_em': recebido_em, 
+        'frequencia': frequencia, 
+        'recorrencia': recorrencia,        
+    }
+
+    atributos_transacao ={
+        'id': receita["transacao"],
+        'data' : data,
+        'operador': operador, 
+        'descricao': descricao,
+        'valor': valor,
+    }
+
+    campos_atualizar_receita = [campo for campo, entrada in atributos_receita.items() if entrada is not None]
+    params_receita = [atributos_receita[campo] for campo in campos_atualizar_receita]
+    params_receita.append(id)
+    campos_atualizar_receita_formatada = [f"{campo} = ?" for campo in campos_atualizar_receita]
+    print(campos_atualizar_receita_formatada , " " , params_receita) # verficação
+
+    query_receita = f"""
+        UPDATE Receitas 
+        SET {" , ".join(campos_atualizar_receita_formatada)}
+        WHERE id = ?
+    """    
+
+    # atualizando atributos de receita
+    with closing(_conectar()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query_receita, params_receita)
+        conn.commit()
+
+    #atualizando atributos de transação
+    editar_transacao(**atributos_transacao)
+
+    return True
