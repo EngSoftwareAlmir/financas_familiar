@@ -1,2 +1,5 @@
 venv/
+__pycache__/
 banco_de_dados.db
+codigosDeApoio.py
+testesGerais.py

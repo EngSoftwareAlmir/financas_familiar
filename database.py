@@ -45,8 +45,9 @@ def inicializar_banco() -> None:
             );
 
             CREATE TABLE IF NOT EXISTS Transacoes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,                
                 operador INTEGER NOT NULL REFERENCES Pessoas(id),
+                descricao TEXT NOT NULL, 
                 data DATE NOT NULL,
                 valor REAL NOT NULL CHECK(valor > 0),
                 tipo TEXT NOT NULL CHECK(tipo IN ('Receita', 'Despesa'))
@@ -73,7 +74,7 @@ def inicializar_banco() -> None:
 
 
 #======================================================================================================================
-# CRUD - PESSOAS
+# CRUD - Pessoas
 #======================================================================================================================
          
 def criar_pessoa(
@@ -139,7 +140,7 @@ def deletar_pessoa(pessoa_id: int) -> bool :
 
 
 #=======================================================================================================================
-# CRUD - RECURSOS DE PAGAMENTOS
+# CRUD - Recursos_de_Pagamento
 #=======================================================================================================================
 
 def criar_recurso_pagamento(
@@ -229,7 +230,7 @@ def editar_recurso_pagamento(
     """
 
     with closing(_conectar()) as conn:
-        conn.execute(query, params)
+        conn.execute(query, tuple(params))
         conn.commit()
 
     return True
@@ -253,4 +254,238 @@ def deletar_recurso_pagamento(recurso_pagamento_id) -> bool:
     except sqlite3.IntegrityError:
         print(f"Não é possivel deletar recurso_pagamento ID {recurso_pagamento_id}, pois ela possui registros vinculados.")
         return False
+
+
+
+#=======================================================================================================================
+# CRUD - Transacoes
+#=======================================================================================================================
+
+def criar_transacao(
+    operador: str, 
+    descricao: str,
+    data: date, 
+    valor: float, 
+    tipo: str
+) -> bool:
+    # Verificar se o operador esta cadastrado na tabela Pessoa
+    pessoa = procurar_pessoa(operador.strip())
+
+    if pessoa:
+        with closing(_conectar()) as conn:
+            conn.execute(
+                """
+                    INSERT INTO Transacoes (operador,descricao, data, valor, tipo)
+                    VALUES(?, ?, ?, ?, ?)
+                """,
+                (pessoa["id"],descricao.strip(), data.isoformat(), valor, tipo.strip()) #parametro tipo tem restrição (Receita e Despesa)
+            )
+            conn.commit()
+            print(f"Transação {descricao} no valor de {valor}, cadastrado com sucesso.")
+
+        return True
+    else:
+        print(f"Operador {operador} não cadastrado na Tabela Pessoas.")
+        return False
+
+
+def procurar_transacao(id: int) -> list | None:
+    with closing(_conectar()) as conn:
+        transacao = conn.execute("""
+            SELECT * 
+            FROM Transacoes
+            WHERE id = ?
+        """,
+        (id,)        
+        ).fetchone()
+        return dict(transacao) if transacao else None
+
     
+def listar_transacoes(
+    operador: str | None = None,
+    descricao: str | None = None,
+    data_inicial: date | None = None,
+    data_final: date | None = None,
+    valor: float | None = None,
+    tipo: str | None = None           
+) -> list[dict]:
+    adicionar_filtro = []
+    params =[]
+
+    # tratando a entrada operador
+    if operador :
+        pessoa = procurar_pessoa(operador.strip())
+
+        if pessoa:
+            adicionar_filtro.append("t.operador = ?")
+            params.append(pessoa["id"])
+        else: 
+            print(f"Operador {operador.strip()} não está cadastrado na tabela Pessoas.")
+            return []
+
+    # Tratando entrada descricao
+    if descricao:
+        adicionar_filtro.append("t.descricao = ?")
+        params.append(descricao)
+
+    # Tratando entrada tipo
+    if tipo:
+        adicionar_filtro.append("t.tipo = ?")
+        params.append(tipo)
+
+    # Tratando as entradas de data
+    if data_inicial and data_final:  
+        if data_inicial != data_final:
+            adicionar_filtro.append("t.data >= ?")
+            params.append(data_inicial)
+
+            adicionar_filtro.append("t.data <= ?")
+            params.append(data_final)
+
+        elif data_inicial == data_final:
+            adicionar_filtro.append("t.data = ?")
+            params.append(data_inicial)
+    elif data_inicial:
+        adicionar_filtro.append("t.data >= ?")
+        params.append(data_inicial)
+    elif data_final:
+        adicionar_filtro.append("t.data <= ?")
+        params.append(data_final)          
+
+    # Tratando a entrada de valor
+    if valor:
+        adicionar_filtro.append("t.valor = ?")
+        params.append(valor)
+
+    # Caso nenhum filtro seja colocado
+    #if not adicionar_filtro:
+    #    print("Você não adicionou nenhum filtro.")
+    #    return []
+
+    #criando a conexão e a query de pesquisa
+    with closing(_conectar()) as conn:
+
+        if adicionar_filtro:
+            respostas = conn.execute(f"""
+                SELECT 
+                    t.id,
+                    p.nome AS operador,
+                    t.descricao,
+                    t.data,
+                    t.valor,
+                    t.tipo
+                FROM Transacoes t
+                JOIN Pessoas p ON t.operador = p.id
+                WHERE {" AND ".join(adicionar_filtro)}
+                ORDER BY t.data,
+                    p.nome
+            """,
+            params,
+        
+            ).fetchall()
+            return [dict(r) for r in respostas]
+        else:
+            respostas = conn.execute(f"""
+                SELECT 
+                    t.id,
+                    p.nome AS operador,
+                    t.descricao,
+                    t.data,
+                    t.valor,
+                    t.tipo
+                FROM Transacoes t
+                JOIN Pessoas p ON t.operador = p.id
+                ORDER BY t.data,
+                    p.nome
+            """).fetchall()
+            return [dict(r) for r in respostas]
+
+
+def editar_transacao(
+    id: int,
+    operador: str | None = None,
+    descricao: str | None = None,
+    data: date | None = None,
+    valor: float | None = None,
+    tipo: str | None = None     
+ ) -> bool:
+
+    # Verfica se a transação com o id informado existe no banco de dados
+    transacao = procurar_transacao(id)
+    campos_para_atualizar = []
+    params = []
+
+    if transacao:
+
+        # tratar entrada operador 
+        if operador: 
+            pessoa = procurar_pessoa(operador.strip())   
+            if not pessoa:
+                print(f"O operador {operador.strip()} não esta cadastrado na tabela Pessoas!")
+                return False
+
+            campos_para_atualizar.append("operador = ?")
+            params.append(pessoa["id"])
+
+        # tratando entrada descrição
+        if descricao:
+            campos_para_atualizar.append("descricao = ?")
+            params.append(descricao.strip())
+
+        # tratando a entrada data
+        if data:
+            campos_para_atualizar.append("data = ?")
+            params.append(data)
+
+        # trantando a entrada valor
+        if valor:
+            campos_para_atualizar.append("valor = ?")
+            params.append(valor)
+
+        # tratando entrada tipo
+        if tipo:
+            campos_para_atualizar.append("tipo = ?")
+            params.append(tipo.strip())
+
+        # Adicionando o id da clasura WHERE da query
+        params.append(id)
+
+        # Criando a query
+        query = f"""
+            UPDATE Transacoes
+            SET {", ".join(campos_para_atualizar)}
+            WHERE id = ?
+        """
+
+        # Atualizando as colunas da transação definida
+        with closing(_conectar()) as conn:
+            conn.execute(query, tuple(params))
+            conn.commit()
+            return True
+        
+
+    else:
+        print(f"Não existe transação com ID {id}!")
+        return False
+     
+
+def deletar_transacao(id:int) -> bool:
+    "Retorna True se deletou com sucesso ou False se houve impedimento por chave estrangeira"
+    try:
+        with closing(_conectar()) as conn:
+            cursor = conn.execute("""
+                DELETE FROM Transacoes 
+                WHERE = ?
+            """,
+            (id,)
+
+            )
+            conn.commit() 
+            return cursor.rowcount > 0
+    except sqlite3.IntegrityError:
+        print(f"Não é possível deletar a transação de ID {id}, pois ela possui registros vinculados")
+        return False
+
+
+
+# Continuar construindo a funçao editar_transacao
