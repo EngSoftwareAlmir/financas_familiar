@@ -550,7 +550,6 @@ def procurar_receita(id: int) -> dict | None:
         return dict(resposta) if resposta else None
     
 
-# funcao inacabada, precisa da função procurar Receita
 def editar_receita(
     id: int,
     data: date | None= None,
@@ -612,3 +611,114 @@ def editar_receita(
     editar_transacao(**atributos_transacao)
 
     return True
+
+
+def listar_receitas(
+    # Parâmetros da tabela 'Transacoes'
+    operador: str | None = None,
+    descricao: str | None = None,
+    data_inicial: date | None = None,
+    data_final: date | None = None,
+    valor: float | None = None,
+    # Parâmetros da tabela 'Receitas'
+    frequencia: str | None = None,
+    recebido_em: str | None = None,
+    recorrencia: bool | None = None,        
+) -> list[dict]:
+    
+    """
+    Descrição:
+        Esta função retorna receita com base nos parâmetros inseridos ou todos os registros se nenhum parâmetro for 
+        adicionado.
+
+    Dependências:
+        * _conectar()
+        * procurar_pessoa()
+    """
+
+    # Caso o operador seja informado, verifica se ele esta cadastrado na tabela 'Pessoas'
+    pessoa_id = None
+
+    if operador is not None:
+        pessoa= procurar_pessoa(operador)
+        if pessoa:
+            pessoa_id= pessoa["id"]            
+            
+        else:
+            print(f"<Receitas>: O operador {operador} não esta cadastrado na tabela 'Pessoas'.")  
+            return []
+
+    parametros_pesquisa_receita = {
+        'r.frequencia': frequencia,
+        'r.recebido_em': recebido_em,
+        'r.recorrencia': recorrencia
+    }
+
+    parametros_pesquisa_transacao = {
+        't.operador': pessoa_id,
+        't.descricao': descricao,
+        't.valor': valor,
+        't.tipo': 'Receita' # setado apenas para Receita, pois queremos só registros de receita
+    }
+
+    # Verificando os parâmetros de entrada da tabela Receitas e fazendo o seu tratamento
+    filtros_receita = [campo for campo, entrada in parametros_pesquisa_receita.items() if entrada is not None]
+    params_receita = [parametros_pesquisa_receita[campo] for campo in filtros_receita]
+    filtros_receita_query = [f"{campo} = ?" for campo in filtros_receita]
+   
+    # Verificando os parâmetros de entrada da tabela Transacoes e fazendo o seu tratamento 
+    filtros_transacao = [campo for campo, entrada in parametros_pesquisa_transacao.items() if entrada is not None]
+    params_transacao = [parametros_pesquisa_transacao[campo] for campo in filtros_transacao] 
+    filtros_transacao_query =[f"{campo} = ?" for campo in filtros_transacao]     
+    
+    # Unido todos os filtros e parâmetros de receita e transação
+    todos_filtros = filtros_receita_query + filtros_transacao_query
+    todos_params = params_receita + params_transacao
+
+    # Tratando a entrada de datas e atualizando todos_filtros e todos_params
+    if data_inicial and data_final:
+        if data_inicial != data_final:
+            todos_filtros.append("t.data >= ?")
+            todos_filtros.append("t.data <= ?")
+            todos_params.append(data_inicial)
+            todos_params.append(data_final)
+        else:
+            todos_filtros.append("t.data = ?")
+            todos_params.append(data_inicial)
+
+    elif data_inicial:
+        todos_filtros.append("t.data >= ?")
+        todos_params.append(data_inicial)
+    elif data_final:
+        todos_filtros.append("t.data <= ?")
+        todos_params.append(data_final)
+
+    # Query para buscas
+    query = f"""
+        SELECT 
+            r.id,
+            r.transacao,
+            t.data,
+            p.nome,
+            t.descricao,
+            t.valor,
+            r.recebido_em,
+            r.frequencia,
+            r.recorrencia
+        FROM Receitas r
+        JOIN Transacoes t ON r.transacao = t.id
+        JOIN Pessoas p ON t.operador = p.id        
+    """    
+
+    if todos_filtros:
+        query += " WHERE " + " AND ".join(todos_filtros)
+
+    # Ordenar a pesquisa
+    query += " ORDER BY t.data, p.nome"
+    
+    #realizando a consulta ao banco de dados
+    with closing(_conectar()) as conn:
+        cursor = conn.cursor()
+        resposta = cursor.execute(query, todos_params).fetchall()
+
+    return [dict(r) for r in resposta]
