@@ -722,3 +722,52 @@ def listar_receitas(
         resposta = cursor.execute(query, todos_params).fetchall()
 
     return [dict(r) for r in resposta]
+
+
+def deletar_receita(id: int) -> bool:
+    """
+    Descrição:
+        Função que apaga do banco de dados um registro de receita especificada pelo ID, juntamente com a transação que está
+        ligada a ela, uma vez que para cada receita há uma transação exclusiva e vice-versa.
+
+    Dependências:
+        * _conectar() 
+        * procurar_receita()                  
+    """
+
+    # Verifica se existe algum registro com o Id informado, caso positivo armazena o id da transação ligada a ela.
+    receita = procurar_receita(id)
+    transacao_id: int = None
+    if receita is not None:
+       transacao_id = receita["transacao"]
+
+    else:
+        print(f"<Receitas>: Não existe receita com ID {id}.")
+        return False
+
+    query_deletar_receita = """
+        DELETE FROM Receitas
+        WHERE id = ?       
+    """
+
+    query_deletar_transacao = """
+        DELETE FROM Transacoes
+        WHERE id = ?
+    """
+    
+
+    try: 
+        with closing(_conectar()) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(query_deletar_receita, (id,)) 
+            cursor.execute(query_deletar_transacao, (transacao_id,))
+            conn.commit()
+
+            return cursor.rowcount > 0
+        
+    except sqlite3.IntegrityError:
+        print(f"<Receitas>: Não é possível deletar a receita ID {id}, pois ela possui registros vinculados.")
+
+        return False
+   
