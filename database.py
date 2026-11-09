@@ -60,7 +60,9 @@ def inicializar_banco() -> None:
                 tipo TEXT NOT NULL DEFAULT 'à vista' CHECK(tipo IN ('à vista', 'financiada')),
                 total_parcelas INTEGER NOT NULL DEFAULT 1 CHECK(total_parcelas > 0),
                 parcelas_pagas INTEGER NOT NULL DEFAULT 1 CHECK(parcelas_pagas >= 0 And parcelas_pagas <= total_parcelas),
-                quitado INTEGER NOT NULL DEFAULT 1 CHECK(quitado IN (0, 1))
+                quitado INTEGER NOT NULL DEFAULT 0 CHECK(quitado IN (0, 1)),                
+                relevancia TEXT NOT NULL DEFAULT 'pontual' CHECK(relevancia IN ('pontual', 'essencial', 'temporaria')),
+                classificacao TEXT NOT NULL DEFAULT 'outros' CHECK(classificacao IN ('outros', 'lazer', 'vestuário', 'alimentação', 'transporte', 'estudo', 'doação'))
             );
 
             CREATE TABLE IF NOT EXISTS Receitas (
@@ -147,20 +149,45 @@ def criar_recurso_pagamento(
     pessoa_nome: str, 
     recurso: str, 
     tipo: str
-) -> None:
+) -> int | None:
     pessoa = procurar_pessoa(pessoa_nome.strip())
 
     if pessoa:
         with closing(_conectar()) as conn:
-            conn.execute(
+            cursor = conn.cursor()
+            cursor.execute(
                 "INSERT INTO Recursos_de_Pagamento (titular, recurso, tipo) VALUES (?, ?, ?)",
                 (pessoa['id'], recurso.strip(), tipo.strip())
             )
             conn.commit()
             print(f"Recurso {recurso} cadastrado com sucesso para o titular {pessoa_nome}.") 
+            return cursor.lastrowid
     else:
-        print(f"pessoa {pessoa_nome} não está cadastrada!")
+        print(f"<Recursos_de Pagamento>: pessoa {pessoa_nome} não está cadastrada na tabela Pessoa!")
+        return None
 
+
+def procurar_recurso_pagamento(id: int) -> dict | None:
+    """
+    Descrição: 
+        Função que retorna um registro na tabela de 'Recursos de Pagamento' com base no ID fornecido pelo usuário, caso
+        haja algum registro com o ID informado.
+
+    Depências:
+        * _conectar()
+    """
+    query = """
+        SELECT *
+        FROM Recursos_de_Pagamento
+        WHERE id = ?
+    """
+    params = (id,)
+
+    with closing(_conectar()) as conn:
+        cursor = conn.cursor()
+        resposta = cursor.execute(query, params).fetchone()
+
+        return dict(resposta) if resposta else None
 
 
 def listar_recursos_pagamento() -> list[dict]:
@@ -264,10 +291,14 @@ def deletar_recurso_pagamento(recurso_pagamento_id) -> bool:
 def criar_transacao(
     operador: str, 
     descricao: str,
-    data: date, 
+    data: date | str, 
     valor: float, 
     tipo: str
 ) -> int | None :
+    #verifica se data é uma string ou objeto date, caso seja string, converte para date
+    if isinstance(data, str):
+        data = date.fromisoformat(data)
+        
     # Verificar se o operador esta cadastrado na tabela Pessoa
     pessoa = procurar_pessoa(operador.strip())
 
@@ -282,18 +313,14 @@ def criar_transacao(
                 (pessoa["id"],descricao.strip(), data.isoformat(), valor, tipo.strip()) #parametro tipo tem restrição (Receita e Despesa)
             )
             conn.commit()
-
-            # Captura o ID da transação criada
-            transacao_id = cursor.lastrowid
-
-            print(f"Transação {descricao} no valor de {valor}, cadastrado com sucesso.")    
-            return transacao_id
+            return cursor.lastrowid
+        
     else:
         print(f"Operador {operador} não cadastrado na Tabela Pessoas.")
         return None
 
 
-def procurar_transacao(id: int) -> list | None:
+def procurar_transacao(id: int) -> dict | None:
     with closing(_conectar()) as conn:
         transacao = conn.execute("""
             SELECT * 
@@ -308,13 +335,20 @@ def procurar_transacao(id: int) -> list | None:
 def listar_transacoes(
     operador: str | None = None,
     descricao: str | None = None,
-    data_inicial: date | None = None,
-    data_final: date | None = None,
+    data_inicial: date | str | None = None,
+    data_final: date | str | None = None,
     valor: float | None = None,
     tipo: str | None = None           
 ) -> list[dict]:
     adicionar_filtro = []
     params =[]
+
+    # Verificando a entrada de data_inicial e data_final e convertendo, quando for preciso, para obj date
+    if isinstance(data_inicial, str):
+        data_inicial = date.fromisoformat(data_inicial)
+
+    if isinstance(data_final, str):
+        data_final = date.fromisoformat(data_final)
 
     # tratando a entrada operador
     if operador :
@@ -409,10 +443,13 @@ def editar_transacao(
     id: int,
     operador: str | None = None,
     descricao: str | None = None,
-    data: date | None = None,
+    data: date | str | None = None,
     valor: float | None = None,
     tipo: str | None = None     
  ) -> bool:
+    # Certifica que data seja um obj date, quando informada
+    if isinstance(data, str):
+        data = date.fromisoformat(data)    
 
     # Verfica se a transação com o id informado existe no banco de dados
     transacao = procurar_transacao(id)
@@ -495,7 +532,7 @@ def deletar_transacao(id:int) -> bool:
 # CRUD - Receitas
 #=======================================================================================================================
 def criar_receita(
-        data: date,
+        data: date | str,
         operador: str,
         descricao: str,
         valor: float,
@@ -617,8 +654,8 @@ def listar_receitas(
     # Parâmetros da tabela 'Transacoes'
     operador: str | None = None,
     descricao: str | None = None,
-    data_inicial: date | None = None,
-    data_final: date | None = None,
+    data_inicial: date | str | None = None,
+    data_final: date | str | None = None,
     valor: float | None = None,
     # Parâmetros da tabela 'Receitas'
     frequencia: str | None = None,
@@ -635,6 +672,13 @@ def listar_receitas(
         * _conectar()
         * procurar_pessoa()
     """
+
+    # quando informada, convertendo os parâmetros de data para um obj date
+    if isinstance(data_inicial, str):
+        data_inicial = date.fromisoformat(data_inicial)
+
+    if isinstance(data_final, str):
+        data_final = date.fromisoformat(data_final)
 
     # Caso o operador seja informado, verifica se ele esta cadastrado na tabela 'Pessoas'
     pessoa_id = None
@@ -770,4 +814,89 @@ def deletar_receita(id: int) -> bool:
         print(f"<Receitas>: Não é possível deletar a receita ID {id}, pois ela possui registros vinculados.")
 
         return False
-   
+
+
+#=======================================================================================================================
+# CRUD - Despesas
+#=======================================================================================================================
+def criar_despesa(
+    # Atributos de transação
+    operador: str,
+    descricao: str,
+    data: date | str ,
+    valor: float,
+
+    # Atributos de despesa
+    forma_pagamento: int, #id do registro da tabela Recursos_de_Pagamento
+    tipo: str,
+    total_parcelas: int | None = 1, # total_parcelas deve ser >= a 1
+    parcelas_pagas: int | None = 0,
+    quitado: bool | None = False,
+    relevancia: str | None = 'pontual',
+    classificacao: str | None = 'outros',
+) -> int | None:
+    """
+    Descrição: 
+        Função que cria um resgistro na tabela Despesas juntamente com um registro de transação na tabela Transacoes, o 
+        qual está vinculada a despesa.
+
+    Dependências:
+        * _conetar()
+        * criar_transacao()
+    """
+    #tratando a entrada de data
+    if isinstance(data, str):
+        data = date.fromisoformat(data)
+
+
+    # verificações: operador e forma_de_pagamento
+    pessoa = procurar_pessoa(operador)
+    recursos_de_pagamento = procurar_recurso_pagamento(forma_pagamento)    
+    if not pessoa:
+        print(f"<Despesas>: O operador {operador} não está cadastrado na tabela 'Pessoas'.")
+        return None
+
+    if not recursos_de_pagamento:
+        print(f"<Despesas>: O ID {forma_pagamento} não possui registro na tabela 'Recursos_de_Pagamento'.")
+        return None
+
+    # Cria a transação e armazenar o id para vinculá-lo a despesa
+    atributos_valores_transacao ={
+        "operador": operador,
+        "descricao": descricao,
+        "data": data,
+        "valor": valor,
+        "tipo": "Despesa"
+    }
+    id_transacao = criar_transacao(**atributos_valores_transacao)
+
+    if not id_transacao:
+        print("<Despesas>: Falha ao criar o registro na tabela 'Transacoes'")
+        return None
+
+    # Criar registro na tabela 'Despesas'
+    atributos_valores_despesa = {
+        "transacao": id_transacao,
+        "forma_pagamento": forma_pagamento,
+        "tipo": tipo,
+        "total_parcelas": total_parcelas,
+        "parcelas_pagas": parcelas_pagas,
+        "quitado": quitado,
+        "relevancia": relevancia,
+        "classificacao": classificacao,
+    }
+
+    atributos_despesa = list(atributos_valores_despesa.keys())
+    valores_despesa = list(atributos_valores_despesa.values())
+
+    query = f"""
+        INSERT INTO Despesas ({", ".join(atributos_despesa)})
+        VALUES ({" , ".join(['?' for chave in atributos_despesa])})
+    """
+
+    with closing(_conectar()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, valores_despesa)
+        conn.commit()
+        return cursor.lastrowid
+    
